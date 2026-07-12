@@ -38,9 +38,10 @@ jobs:
         run: |
           cat > run_test.sh <<'SCRIPT_EOF'
           set -e
-          APK_PATH="v6.apk"
+          # SUDAH DIGANTI KE 7.apk
+          APK_PATH="7.apk"
           if [ ! -f "$APK_PATH" ]; then
-            echo "v6.apk tidak ditemukan di root repo!"
+            echo "7.apk tidak ditemukan di root repo!"
             exit 1
           fi
 
@@ -71,6 +72,10 @@ jobs:
             local id="$1"
             local bounds nums x1 y1 x2 y2
             bounds=$(grep -oP "resource-id=\"com.notelite.player:id/${id}\"[^>]*bounds=\"\[[0-9]+,[0-9]+\]\[[0-9]+,[0-9]+\]\"" window.xml | grep -oP "\[[0-9]+,[0-9]+\]\[[0-9]+,[0-9]+\]" | head -1)
+            if [ -z "$bounds" ]; then
+              echo "0 0"
+              return
+            fi
             nums=$(echo "$bounds" | grep -oP "[0-9]+")
             read -r x1 y1 x2 y2 <<< "$nums"
             echo "$(( (x1 + x2) / 2 )) $(( (y1 + y2) / 2 ))"
@@ -79,9 +84,15 @@ jobs:
           read sx sy <<< "$(get_center etSearch)"
           read bx by <<< "$(get_center btnSearch)"
 
-          adb shell input tap $sx $sy
-          adb shell input text "$SEARCH_QUERY"
-          adb shell input tap $bx $by
+          if [ "$sx" -ne 0 ]; then
+            adb shell input tap $sx $sy
+            # ADB input text gak bisa baca spasi langsung, jadi diganti %s
+            FORMATTED_QUERY=$(echo "$SEARCH_QUERY" | sed 's/ /%s/g')
+            adb shell input text "$FORMATTED_QUERY"
+            adb shell input tap $bx $by
+          else
+            echo "Elemen pencarian tidak ditemukan, lanjut tes kondisi idle..."
+          fi
 
           sleep 15
 
@@ -151,3 +162,4 @@ jobs:
             ram_log.csv
             summary.md
             final_screenshot.png
+            
