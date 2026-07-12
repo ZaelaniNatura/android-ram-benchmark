@@ -1,0 +1,29 @@
+name: Android RAM Test
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  analyze-memory:
+    runs-on: macos-13
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Run Emulator and Measure RAM
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 30
+          target: google_apis
+          arch: x86_64
+          script: |
+            adb install v6.apk
+            adb shell monkey -p com.ubah.namapackagekamu -v 1000
+            echo "=========================================="
+            echo "HASIL ANALISIS PENGGUNAAN RAM APLIKASI"
+            echo "=========================================="
+            adb shell dumpsys meminfo com.notelite.player
+            
