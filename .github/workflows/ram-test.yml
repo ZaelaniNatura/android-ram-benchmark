@@ -1,12 +1,8 @@
-name: RAM Usage Test - Music Playback
+name: RAM Usage Test - ViMusic Benchmark
 
 on:
   workflow_dispatch:
     inputs:
-      search_query:
-        description: "Query lagu yang mau diputar"
-        default: "lofi hip hop"
-        required: false
       duration_seconds:
         description: "Lama monitoring RAM (detik)"
         default: "120"
@@ -38,67 +34,34 @@ jobs:
         run: |
           cat > run_test.sh <<'SCRIPT_EOF'
           set -e
-          # SUDAH DIGANTI KE 7.apk
+          
+          # Pastikan 7.apk ini adalah APK ViMusic
           APK_PATH="7.apk"
           if [ ! -f "$APK_PATH" ]; then
             echo "7.apk tidak ditemukan di root repo!"
             exit 1
           fi
 
+          echo "Menginstall ViMusic..."
           adb wait-for-device
           adb install -g -r "$APK_PATH"
-          adb shell pm grant com.notelite.player android.permission.POST_NOTIFICATIONS || true
-          adb shell am start -n com.notelite.player/.MainActivity
-          sleep 6
+          
+          # Kasih izin notifikasi buat ViMusic (kalau diperlukan)
+          adb shell pm grant it.vfsfitvnm.vimusic android.permission.POST_NOTIFICATIONS || true
+          
+          # Buka aplikasi ViMusic (pakai monkey biar otomatis nyari Launcher Activity-nya)
+          echo "Membuka ViMusic..."
+          adb shell monkey -p it.vfsfitvnm.vimusic -c android.intent.category.LAUNCHER 1 > /dev/null 2>&1
+          sleep 10
 
-          for i in 1 2 3; do
-            adb shell uiautomator dump /sdcard/perm.xml >/dev/null 2>&1 || true
-            adb pull /sdcard/perm.xml perm.xml >/dev/null 2>&1 || true
-            if grep -q 'text="Allow"' perm.xml 2>/dev/null; then
-              ab=$(grep -oP 'text="Allow"[^>]*bounds="\[[0-9]+,[0-9]+\]\[[0-9]+,[0-9]+\]"' perm.xml | grep -oP '\[[0-9]+,[0-9]+\]\[[0-9]+,[0-9]+\]' | head -1)
-              nums=$(echo "$ab" | grep -oP '[0-9]+')
-              read -r ax1 ay1 ax2 ay2 <<< "$nums"
-              adb shell input tap $(( (ax1 + ax2) / 2 )) $(( (ay1 + ay2) / 2 ))
-              sleep 2
-            fi
-            adb shell am start -n com.notelite.player/.MainActivity
-            sleep 2
-          done
-
-          adb shell uiautomator dump /sdcard/window.xml
-          adb pull /sdcard/window.xml window.xml
-
-          get_center() {
-            local id="$1"
-            local bounds nums x1 y1 x2 y2
-            bounds=$(grep -oP "resource-id=\"com.notelite.player:id/${id}\"[^>]*bounds=\"\[[0-9]+,[0-9]+\]\[[0-9]+,[0-9]+\]\"" window.xml | grep -oP "\[[0-9]+,[0-9]+\]\[[0-9]+,[0-9]+\]" | head -1)
-            if [ -z "$bounds" ]; then
-              echo "0 0"
-              return
-            fi
-            nums=$(echo "$bounds" | grep -oP "[0-9]+")
-            read -r x1 y1 x2 y2 <<< "$nums"
-            echo "$(( (x1 + x2) / 2 )) $(( (y1 + y2) / 2 ))"
-          }
-
-          read sx sy <<< "$(get_center etSearch)"
-          read bx by <<< "$(get_center btnSearch)"
-
-          if [ "$sx" -ne 0 ]; then
-            adb shell input tap $sx $sy
-            # ADB input text gak bisa baca spasi langsung, jadi diganti %s
-            FORMATTED_QUERY=$(echo "$SEARCH_QUERY" | sed 's/ /%s/g')
-            adb shell input text "$FORMATTED_QUERY"
-            adb shell input tap $bx $by
-          else
-            echo "Elemen pencarian tidak ditemukan, lanjut tes kondisi idle..."
-          fi
-
+          # Karena ViMusic pakai Compose, kita biarkan dia loading database dan UI
+          # selama beberapa detik sebelum mulai monitoring RAM.
+          echo "Menunggu aplikasi stabil..."
           sleep 15
 
           get_pss() {
             local out pss
-            out=$(adb shell dumpsys meminfo com.notelite.player)
+            out=$(adb shell dumpsys meminfo it.vfsfitvnm.vimusic)
             pss=$(echo "$out" | grep -m1 "TOTAL PSS:" | awk '{print $3}')
             if [ -z "$pss" ]; then
               pss=$(echo "$out" | grep -m1 -E '^[[:space:]]*TOTAL[[:space:]]+[0-9]' | awk '{print $2}')
@@ -108,12 +71,15 @@ jobs:
 
           echo "timestamp,pss_kb" > ram_log.csv
           ITER=$((DURATION_SECONDS / 5))
+          
+          echo "Mulai merekam RAM..."
           for i in $(seq 1 $ITER); do
             PSS=$(get_pss)
             echo "$(date +%s),$PSS" >> ram_log.csv
             sleep 5
           done
 
+          # Ambil screenshot terakhir buat bukti aplikasinya beneran jalan
           adb shell screencap -p /sdcard/final.png
           adb pull /sdcard/final.png final_screenshot.png
           SCRIPT_EOF
@@ -122,7 +88,6 @@ jobs:
       - name: Jalankan RAM test
         uses: reactivecircus/android-emulator-runner@v2
         env:
-          SEARCH_QUERY: ${{ github.event.inputs.search_query || 'lofi hip hop' }}
           DURATION_SECONDS: ${{ github.event.inputs.duration_seconds || '120' }}
         with:
           api-level: 29
@@ -138,7 +103,7 @@ jobs:
       - name: Hitung rata-rata RAM
         run: |
           {
-            echo "## Hasil RAM Test"
+            echo "## Hasil Benchmark RAM - ViMusic"
             echo ""
             awk -F',' 'NR>1 && $2 ~ /^[0-9]+$/ {
               sum += $2; count++
@@ -149,7 +114,7 @@ jobs:
               if (count > 0) {
                 printf "- Jumlah sample: %d\n- Rata-rata PSS: **%.1f MB** (%.0f KB)\n- Min: %.1f MB\n- Max: %.1f MB\n", count, sum/count/1024, sum/count, min/1024, max/1024
               } else {
-                print "Tidak ada data RAM terekam (cek apakah app/search berhasil jalan)."
+                print "Tidak ada data RAM terekam. Pastikan APK yang diuji benar-benar ViMusic."
               }
             }' ram_log.csv
           } | tee summary.md >> "$GITHUB_STEP_SUMMARY"
@@ -157,9 +122,8 @@ jobs:
       - name: Upload hasil
         uses: actions/upload-artifact@v4
         with:
-          name: ram-test-results
+          name: ram-test-vimusic
           path: |
             ram_log.csv
             summary.md
             final_screenshot.png
-            
