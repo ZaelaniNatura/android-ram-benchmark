@@ -34,8 +34,61 @@ jobs:
             ~/.android/adb*
           key: avd-api29-v2
 
+      - name: Tulis script test ke file
+        run: |
+          cat > run_test.sh <<'SCRIPT_EOF'
+          set -e
+          APK_PATH="v6.apk"
+          if [ ! -f "$APK_PATH" ]; then
+            echo "v6.apk tidak ditemukan di root repo!"
+            exit 1
+          fi
+
+          adb wait-for-device
+          adb install -r "$APK_PATH"
+          adb shell am start -n com.notelite.player/.MainActivity
+          sleep 8
+
+          adb shell uiautomator dump /sdcard/window.xml
+          adb pull /sdcard/window.xml window.xml
+
+          get_center() {
+            local id="$1"
+            local bounds nums x1 y1 x2 y2
+            bounds=$(grep -oP "resource-id=\"com.notelite.player:id/${id}\"[^>]*bounds=\"\[[0-9]+,[0-9]+\]\[[0-9]+,[0-9]+\]\"" window.xml | grep -oP "\[[0-9]+,[0-9]+\]\[[0-9]+,[0-9]+\]" | head -1)
+            nums=$(echo "$bounds" | grep -oP "[0-9]+")
+            read -r x1 y1 x2 y2 <<< "$nums"
+            echo "$(( (x1 + x2) / 2 )) $(( (y1 + y2) / 2 ))"
+          }
+
+          read sx sy <<< "$(get_center etSearch)"
+          read bx by <<< "$(get_center btnSearch)"
+
+          adb shell input tap $sx $sy
+          adb shell input text "$SEARCH_QUERY"
+          adb shell input tap $bx $by
+
+          echo "Menunggu lagu mulai diputar..."
+          sleep 15
+
+          echo "timestamp,pss_kb" > ram_log.csv
+          ITER=$((DURATION_SECONDS / 5))
+          for i in $(seq 1 $ITER); do
+            PSS=$(adb shell dumpsys meminfo com.notelite.player | grep -m1 "TOTAL PSS:" | awk '{print $3}')
+            echo "$(date +%s),$PSS" >> ram_log.csv
+            sleep 5
+          done
+
+          adb shell screencap -p /sdcard/final.png
+          adb pull /sdcard/final.png final_screenshot.png
+          SCRIPT_EOF
+          chmod +x run_test.sh
+
       - name: Jalankan RAM test
         uses: reactivecircus/android-emulator-runner@v2
+        env:
+          SEARCH_QUERY: ${{ github.event.inputs.search_query || 'lofi hip hop' }}
+          DURATION_SECONDS: ${{ github.event.inputs.duration_seconds || '120' }}
         with:
           api-level: 29
           arch: x86_64
@@ -45,53 +98,7 @@ jobs:
           emulator-boot-timeout: 900
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none -no-snapshot
           disable-animations: true
-          script: |
-            set -e
-            APK_PATH="v6.apk"
-            if [ ! -f "$APK_PATH" ]; then
-              echo "v6.apk tidak ditemukan di root repo!"
-              exit 1
-            fi
-
-            adb wait-for-device
-            adb install -r "$APK_PATH"
-            adb shell am start -n com.notelite.player/.MainActivity
-            sleep 8
-
-            # ambil koordinat tombol search & input via uiautomator (tahan banting terhadap resolusi)
-            adb shell uiautomator dump /sdcard/window.xml
-            adb pull /sdcard/window.xml window.xml
-
-            get_center() {
-              local id="$1"
-              local bounds nums x1 y1 x2 y2
-              bounds=$(grep -oP "resource-id=\"com.notelite.player:id/${id}\"[^>]*bounds=\"\[[0-9]+,[0-9]+\]\[[0-9]+,[0-9]+\]\"" window.xml | grep -oP "\[[0-9]+,[0-9]+\]\[[0-9]+,[0-9]+\]" | head -1)
-              nums=$(echo "$bounds" | grep -oP "[0-9]+")
-              read -r x1 y1 x2 y2 <<< "$nums"
-              echo "$(( (x1 + x2) / 2 )) $(( (y1 + y2) / 2 ))"
-            }
-
-            read sx sy <<< "$(get_center etSearch)"
-            read bx by <<< "$(get_center btnSearch)"
-
-            adb shell input tap $sx $sy
-            adb shell input text "${{ github.event.inputs.search_query || 'lofi hip hop' }}"
-            adb shell input tap $bx $by
-
-            echo "Menunggu lagu mulai diputar..."
-            sleep 15
-
-            echo "timestamp,pss_kb" > ram_log.csv
-            DURATION="${{ github.event.inputs.duration_seconds || 120 }}"
-            ITER=$((DURATION / 5))
-            for i in $(seq 1 $ITER); do
-              PSS=$(adb shell dumpsys meminfo com.notelite.player | grep -m1 "TOTAL PSS:" | awk '{print $3}')
-              echo "$(date +%s),$PSS" >> ram_log.csv
-              sleep 5
-            done
-
-            adb shell screencap -p /sdcard/final.png
-            adb pull /sdcard/final.png final_screenshot.png
+          script: bash run_test.sh
 
       - name: Hitung rata-rata RAM
         run: |
