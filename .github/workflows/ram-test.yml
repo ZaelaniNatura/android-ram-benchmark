@@ -75,13 +75,11 @@ jobs:
 
             get_center() {
               local id="$1"
-              python3 -c "
-import re
-xml = open('window.xml').read()
-m = re.search(r'resource-id=\"com.notelite.player:id/$id\"[^>]*bounds=\"\[(\d+),(\d+)\]\[(\d+),(\d+)\]\"', xml)
-x1,y1,x2,y2 = map(int, m.groups())
-print(f'{(x1+x2)//2} {(y1+y2)//2}')
-"
+              local bounds nums x1 y1 x2 y2
+              bounds=$(grep -oP "resource-id=\"com.notelite.player:id/${id}\"[^>]*bounds=\"\[[0-9]+,[0-9]+\]\[[0-9]+,[0-9]+\]\"" window.xml | grep -oP "\[[0-9]+,[0-9]+\]\[[0-9]+,[0-9]+\]" | head -1)
+              nums=$(echo "$bounds" | grep -oP "[0-9]+")
+              read -r x1 y1 x2 y2 <<< "$nums"
+              echo "$(( (x1 + x2) / 2 )) $(( (y1 + y2) / 2 ))"
             }
 
             read sx sy <<< "$(get_center etSearch)"
@@ -98,47 +96,4 @@ print(f'{(x1+x2)//2} {(y1+y2)//2}')
             DURATION="${{ github.event.inputs.duration_seconds || 120 }}"
             ITER=$((DURATION / 5))
             for i in $(seq 1 $ITER); do
-              PSS=$(adb shell dumpsys meminfo com.notelite.player | grep -m1 "TOTAL PSS:" | awk '{print $3}')
-              echo "$(date +%s),$PSS" >> ram_log.csv
-              sleep 5
-            done
-
-            adb shell screencap -p /sdcard/final.png
-            adb pull /sdcard/final.png final_screenshot.png
-
-      - name: Hitung rata-rata RAM
-        run: |
-          python3 -c "
-import csv
-vals = []
-with open('ram_log.csv') as f:
-    for row in csv.DictReader(f):
-        try:
-            vals.append(int(row['pss_kb']))
-        except (TypeError, ValueError):
-            pass
-if vals:
-    avg = sum(vals) / len(vals)
-    summary = (
-        f'## Hasil RAM Test\n\n'
-        f'- Jumlah sample: {len(vals)}\n'
-        f'- Rata-rata PSS: **{avg/1024:.1f} MB** ({avg:.0f} KB)\n'
-        f'- Min: {min(vals)/1024:.1f} MB\n'
-        f'- Max: {max(vals)/1024:.1f} MB\n'
-    )
-else:
-    summary = '## Hasil RAM Test\n\nTidak ada data RAM terekam (cek apakah app/search berhasil jalan).\n'
-print(summary)
-with open('summary.md', 'w') as f:
-    f.write(summary)
-"
-          cat summary.md >> "$GITHUB_STEP_SUMMARY"
-
-      - name: Upload hasil
-        uses: actions/upload-artifact@v4
-        with:
-          name: ram-test-results
-          path: |
-            ram_log.csv
-            summary.md
-            final_screenshot.png
+              PSS=$(adb shell dumpsys meminfo com.notelite.player | grep -m1 "TOTAL P
