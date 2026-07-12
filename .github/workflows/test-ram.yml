@@ -16,44 +16,23 @@ jobs:
           api-level: 30
           target: google_apis
           arch: arm64-v8a
-          profile: pixel_5
-          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
+          force-avd-creation: false
+          emulator-boot-timeout: 900
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none -no-snapshot
           disable-animations: true
           script: |
-            echo "Cek file APK di repo..."
             ls -la *.apk
-
             adb install v6.apk
-
-            echo "Membuka MainActivity..."
             adb shell am start -n com.notelite.player/.MainActivity
             sleep 5
-
-            echo "=========================================="
-            echo "RAM SAAT IDLE (belum play apapun)"
-            echo "=========================================="
             adb shell dumpsys meminfo com.notelite.player | tee meminfo_idle.txt
-
-            echo "Trigger play lewat MusicService langsung..."
             adb shell am start-service -n com.notelite.player/.MusicService \
               -a ACTION_PLAY_NEW \
               --es VIDEO_URL "https://www.youtube.com/watch?v=jNQXAC9IVRw" \
               --es SONG_TITLE "RAM Test Song"
-
-            echo "Menunggu audio di-fetch & buffer (15s)..."
             sleep 15
-
-            echo "=========================================="
-            echo "RAM SAAT MULAI PLAYING"
-            echo "=========================================="
             adb shell dumpsys meminfo com.notelite.player | tee meminfo_playing.txt
-
-            echo "Menunggu steady-state (20s tambahan)..."
             sleep 20
-
-            echo "=========================================="
-            echo "RAM STEADY-STATE (~35s play)"
-            echo "=========================================="
             adb shell dumpsys meminfo com.notelite.player | tee meminfo_steady.txt
 
       - name: Upload memory reports
