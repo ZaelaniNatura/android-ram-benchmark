@@ -32,29 +32,18 @@ jobs:
           path: |
             ~/.android/avd/*
             ~/.android/adb*
-          key: avd-api30-v1
-
-      - name: Create AVD (warmup jika belum ada cache)
-        if: steps.avd-cache.outputs.cache-hit != 'true'
-        uses: reactivecircus/android-emulator-runner@v2
-        with:
-          api-level: 30
-          arch: x86_64
-          target: google_apis
-          profile: pixel_5
-          force-avd-creation: false
-          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
-          disable-animations: false
-          script: echo "AVD siap"
+          key: avd-api29-v2
 
       - name: Jalankan RAM test
         uses: reactivecircus/android-emulator-runner@v2
         with:
-          api-level: 30
+          api-level: 29
           arch: x86_64
           target: google_apis
           profile: pixel_5
-          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
+          force-avd-creation: false
+          emulator-boot-timeout: 900
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none -no-snapshot
           disable-animations: true
           script: |
             set -e
@@ -96,4 +85,38 @@ jobs:
             DURATION="${{ github.event.inputs.duration_seconds || 120 }}"
             ITER=$((DURATION / 5))
             for i in $(seq 1 $ITER); do
-              PSS=$(adb shell dumpsys meminfo com.notelite.player | grep -m1 "TOTAL P
+              PSS=$(adb shell dumpsys meminfo com.notelite.player | grep -m1 "TOTAL PSS:" | awk '{print $3}')
+              echo "$(date +%s),$PSS" >> ram_log.csv
+              sleep 5
+            done
+
+            adb shell screencap -p /sdcard/final.png
+            adb pull /sdcard/final.png final_screenshot.png
+
+      - name: Hitung rata-rata RAM
+        run: |
+          {
+            echo "## Hasil RAM Test"
+            echo ""
+            awk -F',' 'NR>1 && $2 ~ /^[0-9]+$/ {
+              sum += $2; count++
+              if (min == "" || $2 < min) min = $2
+              if ($2 > max) max = $2
+            }
+            END {
+              if (count > 0) {
+                printf "- Jumlah sample: %d\n- Rata-rata PSS: **%.1f MB** (%.0f KB)\n- Min: %.1f MB\n- Max: %.1f MB\n", count, sum/count/1024, sum/count, min/1024, max/1024
+              } else {
+                print "Tidak ada data RAM terekam (cek apakah app/search berhasil jalan)."
+              }
+            }' ram_log.csv
+          } | tee summary.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload hasil
+        uses: actions/upload-artifact@v4
+        with:
+          name: ram-test-results
+          path: |
+            ram_log.csv
+            summary.md
+            final_screenshot.png
