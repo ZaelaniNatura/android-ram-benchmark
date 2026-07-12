@@ -8,7 +8,7 @@ on:
 
 jobs:
   analyze-memory:
-    runs-on: macos-13
+    runs-on: macos-latest
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -21,9 +21,27 @@ jobs:
           arch: x86_64
           script: |
             adb install v6.apk
-            adb shell monkey -p com.ubah.namapackagekamu -v 1000
+
+            # Buka app dulu biar MainActivity & service ke-bind normal
+            adb shell am start -n com.notelite.player/.MainActivity
+            sleep 3
+
+            # Trigger playback nyata langsung ke MusicService (skip UI, pakai URL YouTube asli)
+            adb shell am start-service -n com.notelite.player/.MusicService \
+              -a ACTION_PLAY_NEW \
+              --es VIDEO_URL "https://www.youtube.com/watch?v=dQw4w9WgXcQ" \
+              --es SONG_TITLE "RAM Test Song"
+
+            echo "Menunggu audio di-fetch & buffer..."
+            sleep 15
+
             echo "=========================================="
-            echo "HASIL ANALISIS PENGGUNAAN RAM APLIKASI"
+            echo "RAM SAAT MULAI PLAYING"
             echo "=========================================="
             adb shell dumpsys meminfo com.notelite.player
-            
+
+            sleep 20
+            echo "=========================================="
+            echo "RAM STEADY-STATE (setelah ~35s play)"
+            echo "=========================================="
+            adb shell dumpsys meminfo com.notelite.player
