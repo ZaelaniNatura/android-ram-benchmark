@@ -1,0 +1,144 @@
+name: RAM Usage Test - Music Playback
+
+on:
+  workflow_dispatch:
+    inputs:
+      search_query:
+        description: "Query lagu yang mau diputar"
+        default: "lofi hip hop"
+        required: false
+      duration_seconds:
+        description: "Lama monitoring RAM (detik)"
+        default: "120"
+        required: false
+
+jobs:
+  ram-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      - name: AVD cache
+        uses: actions/cache@v4
+        id: avd-cache
+        with:
+          path: |
+            ~/.android/avd/*
+            ~/.android/adb*
+          key: avd-api30-v1
+
+      - name: Create AVD (warmup jika belum ada cache)
+        if: steps.avd-cache.outputs.cache-hit != 'true'
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 30
+          arch: x86_64
+          target: google_apis
+          profile: pixel_5
+          force-avd-creation: false
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
+          disable-animations: false
+          script: echo "AVD siap"
+
+      - name: Jalankan RAM test
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 30
+          arch: x86_64
+          target: google_apis
+          profile: pixel_5
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
+          disable-animations: true
+          script: |
+            set -e
+            APK_PATH="v6.apk"
+            if [ ! -f "$APK_PATH" ]; then
+              echo "v6.apk tidak ditemukan di root repo!"
+              exit 1
+            fi
+
+            adb wait-for-device
+            adb install -r "$APK_PATH"
+            adb shell am start -n com.notelite.player/.MainActivity
+            sleep 8
+
+            # ambil koordinat tombol search & input via uiautomator (tahan banting terhadap resolusi)
+            adb shell uiautomator dump /sdcard/window.xml
+            adb pull /sdcard/window.xml window.xml
+
+            get_center() {
+              local id="$1"
+              python3 -c "
+import re
+xml = open('window.xml').read()
+m = re.search(r'resource-id=\"com.notelite.player:id/$id\"[^>]*bounds=\"\[(\d+),(\d+)\]\[(\d+),(\d+)\]\"', xml)
+x1,y1,x2,y2 = map(int, m.groups())
+print(f'{(x1+x2)//2} {(y1+y2)//2}')
+"
+            }
+
+            read sx sy <<< "$(get_center etSearch)"
+            read bx by <<< "$(get_center btnSearch)"
+
+            adb shell input tap $sx $sy
+            adb shell input text "${{ github.event.inputs.search_query || 'lofi hip hop' }}"
+            adb shell input tap $bx $by
+
+            echo "Menunggu lagu mulai diputar..."
+            sleep 15
+
+            echo "timestamp,pss_kb" > ram_log.csv
+            DURATION="${{ github.event.inputs.duration_seconds || 120 }}"
+            ITER=$((DURATION / 5))
+            for i in $(seq 1 $ITER); do
+              PSS=$(adb shell dumpsys meminfo com.notelite.player | grep -m1 "TOTAL PSS:" | awk '{print $3}')
+              echo "$(date +%s),$PSS" >> ram_log.csv
+              sleep 5
+            done
+
+            adb shell screencap -p /sdcard/final.png
+            adb pull /sdcard/final.png final_screenshot.png
+
+      - name: Hitung rata-rata RAM
+        run: |
+          python3 -c "
+import csv
+vals = []
+with open('ram_log.csv') as f:
+    for row in csv.DictReader(f):
+        try:
+            vals.append(int(row['pss_kb']))
+        except (TypeError, ValueError):
+            pass
+if vals:
+    avg = sum(vals) / len(vals)
+    summary = (
+        f'## Hasil RAM Test\n\n'
+        f'- Jumlah sample: {len(vals)}\n'
+        f'- Rata-rata PSS: **{avg/1024:.1f} MB** ({avg:.0f} KB)\n'
+        f'- Min: {min(vals)/1024:.1f} MB\n'
+        f'- Max: {max(vals)/1024:.1f} MB\n'
+    )
+else:
+    summary = '## Hasil RAM Test\n\nTidak ada data RAM terekam (cek apakah app/search berhasil jalan).\n'
+print(summary)
+with open('summary.md', 'w') as f:
+    f.write(summary)
+"
+          cat summary.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload hasil
+        uses: actions/upload-artifact@v4
+        with:
+          name: ram-test-results
+          path: |
+            ram_log.csv
+            summary.md
+            final_screenshot.png
